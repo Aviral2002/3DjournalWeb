@@ -96,26 +96,35 @@ const createTextTexture = (text) => {
   canvas.height = 1024;
   context.fillStyle = 'rgba(255, 255, 255, 0.0)';
   context.fillRect(0, 0, canvas.width, canvas.height);
-  context.font = '6rem serif';
+  context.font = "78px 'Brush Script MT', cursive";
   context.fillStyle = 'black';
-  context.textAlign = "top";
+  context.textAlign = "left";
   context.textBaseline = "top";
   const words = text.split(' ');
   let line = '';
-  let y = 5;
+  let y = 40;
+  let maxWidth = canvas.width - 80;
+  let isOverflowing = false;
+
   for (let word of words) {
     const testLine = line + word + ' ';
     const metrics = context.measureText(testLine);
-    if (metrics.width > canvas.width - 40) {
-      context.fillText(line, 20, y);
+    if (metrics.width > maxWidth) {
+      context.fillText(line, 40, y);
       line = word + ' ';
-      y += 80;
+      y += 60;
+      if (y > canvas.height - 60) {
+        isOverflowing = true;
+        break;
+      }
     } else {
       line = testLine;
     }
   }
-  context.fillText(line, 40, y);
-  return new CanvasTexture(canvas);
+  if (!isOverflowing) {
+    context.fillText(line, 40, y);
+  }
+  return { texture: new CanvasTexture(canvas), isOverflowing };
 };
 
 const createCompositeTexture = (pageTexture, textTexture) => {
@@ -140,7 +149,8 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
   const [frontTexture, setFrontTexture] = useState(null);
   const [backTexture, setBackTexture] = useState(null);
   const [isEditing, setIsEditing] = useAtom(isEditingAtom);
-  const [selectedWritingPage] = useAtom(selectedWritingPageAtom);
+  const [selectedWritingPage, setSelectedWritingPage] = useAtom(selectedWritingPageAtom);
+  const [currentPage, setPage] = useAtom(pageAtom);
 
   const [picture, picture2, pictureRoughness] = useTexture([
     `/textures/${front}.jpg`,
@@ -153,21 +163,28 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
 
   const updateTexture = useMemo(
     () =>
-      debounce((text) => {
-        const newTextTexture = createTextTexture(text);
+      debounce((text, pageNumber) => {
+        const { texture: newTextTexture, isOverflowing } = createTextTexture(text);
         const newFrontTexture = createCompositeTexture(picture, newTextTexture);
         const newBackTexture = createCompositeTexture(picture2, newTextTexture);
         setFrontTexture(newFrontTexture);
         setBackTexture(newBackTexture);
+
+        if (isOverflowing && pageNumber < pages.length - 1) {
+          const nextPageText = text.split(' ').slice(100).join(' '); // Assume 100 words fit on a page
+          setSelectedWritingPage(pageNumber + 1);
+          setPage(pageNumber + 1);
+          handleJournalChange({ target: { value: nextPageText } }, pageNumber + 1);
+        }
       }, 100),
-    [picture, picture2]
+    [picture, picture2, setSelectedWritingPage, setPage]
   );
 
-  const handleJournalChange = (e) => {
+  const handleJournalChange = (e, pageNumber = number) => {
     const newJournalEntries = [...journalEntries];
-    newJournalEntries[number] = e.target.value;
+    newJournalEntries[pageNumber] = e.target.value;
     setJournalEntries(newJournalEntries);
-    updateTexture(e.target.value);
+    updateTexture(e.target.value, pageNumber);
   };
 
   const handleJournalFocus = () => {
@@ -212,7 +229,7 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
       }),
       new MeshStandardMaterial({
         color: whiteColor,
-        map: picture2,
+        map: backTexture || picture2,
         ...(number === pages.length - 1
           ? { roughnessMap: pictureRoughness }
           : { roughness: 0.5 }),
@@ -230,10 +247,7 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
     return mesh;
   }, [frontTexture, backTexture, picture, picture2, pictureRoughness]);
 
-  const [currentPage, setPage] = useAtom(pageAtom);
   const [highlighted, setHighlighted] = useState(false);
-  
-
 
   useFrame((_, delta) => {
     if (!skinnedMeshRef.current) {
@@ -327,7 +341,7 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
         <Html position={[0.01, 0.8, 0.01]} center>
           <textarea
             value={journalEntries[number]}
-            onChange={handleJournalChange}
+            onChange={(e) => handleJournalChange(e, number)}
             onFocus={handleJournalFocus}
             onBlur={handleJournalBlur}
             style={{
@@ -351,13 +365,13 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
 };
 
 export const Book = ({ ...props }) => {
-  const [page] = useAtom(pageAtom);
+  const [page, setPage] = useAtom(pageAtom);
   const [delayedPage, setDelayedPage] = useState(page);
   const [selectedWritingPage, setSelectedWritingPage] = useAtom(selectedWritingPageAtom);
   const [isEditing] = useAtom(isEditingAtom);
 
   useEffect(() => {
-    if (isEditing) return; // Don't change pages while editing
+    if (isEditing) return;
 
     let timeout;
     const goToPage = () => {
@@ -391,7 +405,11 @@ export const Book = ({ ...props }) => {
       <Html position={[0, 2, 0]}>
         <select 
           value={selectedWritingPage} 
-          onChange={(e) => setSelectedWritingPage(Number(e.target.value))}
+          onChange={(e) => {
+            const newPage = Number(e.target.value);
+            setSelectedWritingPage(newPage);
+            setPage(newPage);
+          }}
           style={{
             position: 'absolute',
             top: '150px',
@@ -400,18 +418,15 @@ export const Book = ({ ...props }) => {
             padding: '5px',
             fontSize: '12px',
             fontWeight: 'bold',
-            background:"rgb(224, 193, 154)",
+            background: "rgb(224, 193, 154)",
           }}
         >
           {pages.map((_, index) => (
-            <option 
-            key={index}
-             value={index}>
-              Write on Page {index}</option>
+            <option key={index} value={index}>Write on Page {index}</option>
           ))}
         </select>
       </Html>
-      {[...pages].map((pageData, index) => (
+      {pages.map((pageData, index) => (
         <Page
           key={index}
           page={delayedPage}
