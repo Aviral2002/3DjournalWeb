@@ -19,6 +19,7 @@ import {
   CanvasTexture,
   Texture
 } from "three";
+import * as THREE from 'three';
 import { degToRad } from "three/src/math/MathUtils.js";
 import { pageAtom, pages } from "./UI";
 import { atom } from 'jotai';
@@ -340,6 +341,7 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
       {number === selectedWritingPage && (
         <Html position={[0.01, 0.8, 0.01]} center>
           <textarea
+            id = "journalEntry"
             value={journalEntries[number]}
             onChange={(e) => handleJournalChange(e, number)}
             onFocus={handleJournalFocus}

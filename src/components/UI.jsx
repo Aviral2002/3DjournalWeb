@@ -43,7 +43,7 @@ export const UI = () => {
       <main className=" pointer-events-none select-none z-10 fixed  inset-0  flex justify-between flex-col">
         <a
           className="pointer-events-auto mt-10 ml-10"
-          href="https://thatsphilosophical.substack.com/p/absurdism-your-guide-to-navigating"
+          href="https://www.thelivingphilosophy.com/nihilism-vs-existentialism-vs-absurdism/"
         >
           <img className="w-20 border-2 border-red-200 rounded-full" src="/images/Punishment_sisyph.jpg" />
 
