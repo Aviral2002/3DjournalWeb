@@ -2,7 +2,7 @@ import { useCursor, useTexture, Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { useAtom } from "jotai";
 import { easing } from "maath";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import debounce from 'lodash.debounce';
 import {
   Bone,
@@ -23,6 +23,7 @@ import * as THREE from 'three';
 import { degToRad } from "three/src/math/MathUtils.js";
 import { pageAtom, pages } from "./UI";
 import { atom } from 'jotai';
+import { loadJournalEntries, saveJournalEntries } from '../utils/storage';
 
 const isEditingAtom = atom(false);
 const selectedWritingPageAtom = atom(1);
@@ -144,9 +145,7 @@ const createCompositeTexture = (pageTexture, textTexture) => {
 };
 
 const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
-  const [journalEntries, setJournalEntries] = useState(
-    new Array(pages.length).fill("")
-  );
+  const [journalEntries, setJournalEntries] = useState(() => loadJournalEntries());
   const [frontTexture, setFrontTexture] = useState(null);
   const [backTexture, setBackTexture] = useState(null);
   const [isEditing, setIsEditing] = useAtom(isEditingAtom);
@@ -162,31 +161,40 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
   ]);
   picture.colorSpace = picture2.colorSpace = SRGBColorSpace;
 
-  const updateTexture = useMemo(
-    () =>
-      debounce((text, pageNumber) => {
-        const { texture: newTextTexture, isOverflowing } = createTextTexture(text);
-        const newFrontTexture = createCompositeTexture(picture, newTextTexture);
-        const newBackTexture = createCompositeTexture(picture2, newTextTexture);
-        setFrontTexture(newFrontTexture);
-        setBackTexture(newBackTexture);
+  const materialsRef = useRef();
+  const textureUpdateRef = useRef(null);
 
-        if (isOverflowing && pageNumber < pages.length - 1) {
-          const nextPageText = text.split(' ').slice(100).join(' '); // Assume 100 words fit on a page
-          setSelectedWritingPage(pageNumber + 1);
-          setPage(pageNumber + 1);
-          handleJournalChange({ target: { value: nextPageText } }, pageNumber + 1);
-        }
-      }, 100),
-    [picture, picture2, setSelectedWritingPage, setPage]
-  );
+  const updateTexture = useCallback((text, pageNumber) => {
+    if (!materialsRef.current) return;
+    
+    const { texture: newTextTexture, isOverflowing } = createTextTexture(text);
+    const newFrontTexture = createCompositeTexture(picture, newTextTexture);
+    const newBackTexture = createCompositeTexture(picture2, newTextTexture);
+    
+    // Update materials directly without state
+    if (materialsRef.current[4]) materialsRef.current[4].map = newFrontTexture;
+    if (materialsRef.current[5]) materialsRef.current[5].map = newBackTexture;
+    
+    if (isOverflowing && pageNumber < pages.length - 1) {
+      const nextPageText = text.split(' ').slice(100).join(' ');
+      setSelectedWritingPage(pageNumber + 1);
+      setPage(pageNumber + 1);
+      textureUpdateRef.current = { text: nextPageText, pageNumber: pageNumber + 1 };
+    }
+  }, [picture, picture2, setSelectedWritingPage, setPage]);
 
-  const handleJournalChange = (e, pageNumber = number) => {
+  const handleJournalChange = useCallback((e, pageNumber = number) => {
     const newJournalEntries = [...journalEntries];
     newJournalEntries[pageNumber] = e.target.value;
     setJournalEntries(newJournalEntries);
-    updateTexture(e.target.value, pageNumber);
-  };
+    saveJournalEntries(newJournalEntries);
+    
+    // Debounce the texture update
+    if (textureUpdateRef.current) clearTimeout(textureUpdateRef.current.timeout);
+    textureUpdateRef.current = {
+      timeout: setTimeout(() => updateTexture(e.target.value, pageNumber), 100)
+    };
+  }, [journalEntries, updateTexture, number]);
 
   const handleJournalFocus = () => {
     setIsEditing(true);
@@ -238,6 +246,8 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
         emissiveIntensity: 0,
       }),
     ];
+
+    materialsRef.current = materials;
 
     const mesh = new SkinnedMesh(pageGeometry, materials);
     mesh.castShadow = true;
@@ -319,6 +329,22 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
     }
   });
   
+  // Cleanup
+  useEffect(() => {
+    return () => {
+      if (textureUpdateRef.current?.timeout) {
+        clearTimeout(textureUpdateRef.current.timeout);
+      }
+    };
+  }, []);
+
+  // Add this new effect to apply stored text to texture on mount
+  useEffect(() => {
+    if (journalEntries[number]) {
+      updateTexture(journalEntries[number], number);
+    }
+  }, []); // Run only on mount
+
   return (
     <group
       {...props}
